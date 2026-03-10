@@ -11,6 +11,7 @@ from AppKit import (
     NSSearchField,
     NSScrollView, NSTextView,
     NSView, NSButton,
+    NSMenu, NSMenuItem,
     NSColor, NSFont,
     NSScreen, NSApp,
     NSForegroundColorAttributeName, NSFontAttributeName,
@@ -204,8 +205,26 @@ class TurengPanel(NSPanel):
 
 class AppDelegate(NSObject):
 
+    @objc.python_method
+    def _buildAppMenu(self):
+        menubar = NSMenu.alloc().init()
+        edit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Edit", None, "")
+        edit_menu = NSMenu.alloc().initWithTitle_("Edit")
+        for title, action, key in [
+            ("Cut",        "cut:",       "x"),
+            ("Copy",       "copy:",      "c"),
+            ("Paste",      "paste:",     "v"),
+            ("Undo",       "undo:",      "z"),
+            ("Select All", "selectAll:", "a"),
+        ]:
+            edit_menu.addItemWithTitle_action_keyEquivalent_(title, action, key)
+        edit_item.setSubmenu_(edit_menu)
+        menubar.addItem_(edit_item)
+        NSApp.setMainMenu_(menubar)
+
     def applicationDidFinishLaunching_(self, notification):
         NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+        self._buildAppMenu()
 
         self._status_item = NSStatusBar.systemStatusBar().statusItemWithLength_(
             NSVariableStatusItemLength
