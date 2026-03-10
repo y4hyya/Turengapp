@@ -10,7 +10,7 @@ from AppKit import (
     NSVisualEffectBlendingModeBehindWindow, NSVisualEffectStateActive,
     NSSearchField,
     NSScrollView, NSTextView,
-    NSView,
+    NSView, NSButton,
     NSColor, NSFont,
     NSScreen, NSApp,
     NSForegroundColorAttributeName, NSFontAttributeName,
@@ -62,15 +62,32 @@ class TurengPanel(NSPanel):
         visual.layer().setCornerRadius_(12)
         visual.layer().setMasksToBounds_(True)
 
-        # Search field
+        # Search field (80% width) + Exit button (remaining 20%)
         search_y = PANEL_HEIGHT - PADDING - SEARCH_HEIGHT
+        available_w = PANEL_WIDTH - PADDING * 2
+        btn_w = 60
+        gap = 8
+        field_w = available_w - btn_w - gap
+
         self.search_field = NSSearchField.alloc().initWithFrame_(
-            NSMakeRect(PADDING, search_y, PANEL_WIDTH - PADDING * 2, SEARCH_HEIGHT)
+            NSMakeRect(PADDING, search_y, field_w, SEARCH_HEIGHT)
         )
         self.search_field.setPlaceholderString_("Type a word, press Enter...")
         self.search_field.setFont_(NSFont.systemFontOfSize_(14))
         self.search_field.setFocusRingType_(1)  # NSFocusRingTypeNone
         visual.addSubview_(self.search_field)
+
+        # Exit button
+        btn_x = PADDING + field_w + gap
+        exit_btn = NSButton.alloc().initWithFrame_(
+            NSMakeRect(btn_x, search_y, btn_w, SEARCH_HEIGHT)
+        )
+        exit_btn.setTitle_("Exit")
+        exit_btn.setBezelStyle_(4)  # NSBezelStyleRounded
+        exit_btn.setFont_(NSFont.systemFontOfSize_(13))
+        exit_btn.setTarget_(self)
+        exit_btn.setAction_("exitApp:")
+        visual.addSubview_(exit_btn)
 
         # Separator
         sep_y = search_y - PADDING // 2
@@ -109,6 +126,9 @@ class TurengPanel(NSPanel):
 
         self.setContentView_(visual)
         self._setPlaceholder("Type a word above and press Enter to translate")
+
+    def exitApp_(self, sender):
+        NSApp.terminate_(None)
 
     def canBecomeKeyWindow(self):
         return True
