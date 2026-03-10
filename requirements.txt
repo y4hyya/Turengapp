@@ -1,0 +1,4 @@
+rumps
+requests
+cloudscraper
+beautifulsoup4

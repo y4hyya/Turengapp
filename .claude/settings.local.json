@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "Bash(npx skills:*)",
+      "WebFetch(domain:tureng.com)",
+      "Bash(curl -s -A \"Mozilla/5.0 \\(Macintosh; Intel Mac OS X 10_15_7\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/120.0.0.0 Safari/537.36\" \"https://tureng.com/tr/turkce-ingilizce/apple\" | python3 -c \"\nimport sys\nfrom bs4 import BeautifulSoup\nhtml = sys.stdin.read\\(\\)\nsoup = BeautifulSoup\\(html, 'html.parser'\\)\n# Find tables\ntables = soup.find_all\\('table'\\)\nfor t in tables[:3]:\n    print\\('TABLE:', t.get\\('id'\\), t.get\\('class'\\)\\)\n    rows = t.find_all\\('tr'\\)[:3]\n    for r in rows:\n        cells = r.find_all\\('td'\\)\n        for c in cells:\n            print\\('  TD class:', c.get\\('class'\\), '| text:', c.get_text\\(strip=True\\)[:40]\\)\n    print\\('---'\\)\n\" 2>&1 | head -80)",
+      "Bash(pip3 install:*)",
+      "Bash(curl -s -A \"Mozilla/5.0 \\(Macintosh; Intel Mac OS X 10_15_7\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/120.0.0.0 Safari/537.36\" \"https://tureng.com/tr/turkce-ingilizce/apple\" | python3 -c \"\nimport sys\nfrom bs4 import BeautifulSoup\nhtml = sys.stdin.read\\(\\)\nsoup = BeautifulSoup\\(html, 'html.parser'\\)\ntables = soup.find_all\\('table'\\)\nfor t in tables[:3]:\n    print\\('TABLE id:', t.get\\('id'\\), '| class:', t.get\\('class'\\)\\)\n    rows = t.find_all\\('tr'\\)[:4]\n    for r in rows:\n        cells = r.find_all\\('td'\\)\n        for c in cells:\n            print\\('  TD class:', c.get\\('class'\\), '| text:', c.get_text\\(strip=True\\)[:50]\\)\n    print\\('---'\\)\n\" 2>&1)",
+      "Bash(curl -s -L -A \"Mozilla/5.0 \\(Macintosh; Intel Mac OS X 10_15_7\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/120.0.0.0 Safari/537.36\" \\\\\n  -H \"Accept-Language: tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7\" \\\\\n  -H \"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\" \\\\\n  \"https://tureng.com/tr/turkce-ingilizce/apple\" | python3 -c \"\nimport sys\nfrom bs4 import BeautifulSoup\nhtml = sys.stdin.read\\(\\)\nprint\\('HTML length:', len\\(html\\)\\)\nprint\\(html[:500]\\)\n\")",
+      "Bash(python3 -c \"\nfrom scraper import search\nresults = search\\('apple'\\)\nprint\\(f'Found {len\\(results\\)} results'\\)\nfor r in results[:8]:\n    print\\(f\\\\\"  [{r['category']}] {r['en']} → {r['tr']}  {r['type']}\\\\\"\\)\n\")",
+      "Bash(python3 -c \"\nfrom scraper import search\nresults = search\\('elma'\\)\nprint\\(f'Found {len\\(results\\)} results'\\)\nfor r in results[:5]:\n    print\\(f\\\\\"  [{r['category']}] {r['en']} → {r['tr']}  {r['type']}\\\\\"\\)\n\")",
+      "Bash(python3 -c \"\nimport cloudscraper\nfrom bs4 import BeautifulSoup\n\nscraper = cloudscraper.create_scraper\\(\\)\nr = scraper.get\\('https://tureng.com/tr/turkce-ingilizce/elma'\\)\nsoup = BeautifulSoup\\(r.text, 'html.parser'\\)\ntables = soup.find_all\\('table'\\)\nfor t in tables:\n    print\\('TABLE id:', t.get\\('id'\\), '| rows:', len\\(t.find_all\\('tr'\\)\\)\\)\n\")"
+    ]
+  }
+}
