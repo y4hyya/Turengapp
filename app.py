@@ -1,69 +1,253 @@
+import objc
 import threading
-import rumps
+
+from AppKit import (
+    NSApplication, NSApplicationActivationPolicyAccessory,
+    NSStatusBar, NSVariableStatusItemLength,
+    NSPanel, NSWindowStyleMaskBorderless,
+    NSBackingStoreBuffered,
+    NSVisualEffectView, NSVisualEffectMaterialPopover,
+    NSVisualEffectBlendingModeBehindWindow, NSVisualEffectStateActive,
+    NSSearchField,
+    NSScrollView, NSTextView,
+    NSView,
+    NSColor, NSFont,
+    NSScreen, NSApp,
+    NSForegroundColorAttributeName, NSFontAttributeName,
+    NSAttributedString,
+    NSNoBorder,
+    NSMakeRect, NSMakePoint, NSMakeSize, NSMakeRange,
+    NSStatusWindowLevel,
+)
+from Foundation import NSObject
+
 from scraper import search
 
-MAX_RESULTS = 20
+PANEL_WIDTH = 400
+PANEL_HEIGHT = 480
+PADDING = 14
+SEARCH_HEIGHT = 36
 
 
-class TurengApp(rumps.App):
-    def __init__(self):
-        super().__init__("TR", quit_button="Quit")
-        self.menu = [
-            "Search...",
-            None,
-            {"Results": [rumps.MenuItem("No results yet")]},
-        ]
+class TurengPanel(NSPanel):
 
-    @rumps.clicked("Search...")
-    def on_search(self, _):
-        window = rumps.Window(
-            message="Enter a word to translate:",
-            title="Tureng",
-            default_text="",
-            ok="Search",
-            cancel="Cancel",
-            dimensions=(260, 24),
+    def initPanel(self):
+        style = NSWindowStyleMaskBorderless
+        self = objc.super(TurengPanel, self).initWithContentRect_styleMask_backing_defer_(
+            NSMakeRect(0, 0, PANEL_WIDTH, PANEL_HEIGHT),
+            style,
+            NSBackingStoreBuffered,
+            False,
         )
-        response = window.run()
-        if response.clicked == 1 and response.text.strip():
-            word = response.text.strip()
-            self._set_lines([f'Searching "{word}"...'])
-            threading.Thread(target=self._fetch, args=(word,), daemon=True).start()
+        if self is None:
+            return None
 
+        self.setLevel_(NSStatusWindowLevel + 1)
+        self.setHasShadow_(True)
+        self.setOpaque_(False)
+        self.setBackgroundColor_(NSColor.clearColor())
+        self._buildUI()
+        return self
+
+    @objc.python_method
+    def _buildUI(self):
+        # Frosted glass background with rounded corners
+        visual = NSVisualEffectView.alloc().initWithFrame_(
+            NSMakeRect(0, 0, PANEL_WIDTH, PANEL_HEIGHT)
+        )
+        visual.setMaterial_(NSVisualEffectMaterialPopover)
+        visual.setBlendingMode_(NSVisualEffectBlendingModeBehindWindow)
+        visual.setState_(NSVisualEffectStateActive)
+        visual.setWantsLayer_(True)
+        visual.layer().setCornerRadius_(12)
+        visual.layer().setMasksToBounds_(True)
+
+        # Search field
+        search_y = PANEL_HEIGHT - PADDING - SEARCH_HEIGHT
+        self.search_field = NSSearchField.alloc().initWithFrame_(
+            NSMakeRect(PADDING, search_y, PANEL_WIDTH - PADDING * 2, SEARCH_HEIGHT)
+        )
+        self.search_field.setPlaceholderString_("Type a word, press Enter...")
+        self.search_field.setFont_(NSFont.systemFontOfSize_(14))
+        self.search_field.setFocusRingType_(1)  # NSFocusRingTypeNone
+        visual.addSubview_(self.search_field)
+
+        # Separator
+        sep_y = search_y - PADDING // 2
+        sep = NSView.alloc().initWithFrame_(NSMakeRect(0, sep_y, PANEL_WIDTH, 1))
+        sep.setWantsLayer_(True)
+        sep.layer().setBackgroundColor_(
+            NSColor.colorWithRed_green_blue_alpha_(0.5, 0.5, 0.5, 0.4).CGColor()
+        )
+        visual.addSubview_(sep)
+
+        # Scroll view + text view
+        results_height = sep_y - 2
+        scroll = NSScrollView.alloc().initWithFrame_(
+            NSMakeRect(0, 0, PANEL_WIDTH, results_height)
+        )
+        scroll.setHasVerticalScroller_(True)
+        scroll.setAutohidesScrollers_(True)
+        scroll.setBorderType_(NSNoBorder)
+        scroll.setDrawsBackground_(False)
+
+        self.results_view = NSTextView.alloc().initWithFrame_(
+            NSMakeRect(0, 0, PANEL_WIDTH, results_height)
+        )
+        self.results_view.setEditable_(False)
+        self.results_view.setSelectable_(True)
+        self.results_view.setDrawsBackground_(False)
+        self.results_view.setVerticallyResizable_(True)
+        self.results_view.setHorizontallyResizable_(False)
+        self.results_view.setMaxSize_(NSMakeSize(PANEL_WIDTH, 1e8))
+        self.results_view.textContainer().setWidthTracksTextView_(True)
+        self.results_view.textContainer().setContainerSize_(NSMakeSize(PANEL_WIDTH, 1e8))
+        self.results_view.setTextContainerInset_(NSMakeSize(PADDING, PADDING))
+
+        scroll.setDocumentView_(self.results_view)
+        visual.addSubview_(scroll)
+
+        self.setContentView_(visual)
+        self._setPlaceholder("Type a word above and press Enter to translate")
+
+    def canBecomeKeyWindow(self):
+        return True
+
+    def canBecomeMainWindow(self):
+        return True
+
+    @objc.python_method
+    def _setPlaceholder(self, text):
+        attrs = {
+            NSForegroundColorAttributeName: NSColor.tertiaryLabelColor(),
+            NSFontAttributeName: NSFont.systemFontOfSize_(13),
+        }
+        astr = NSAttributedString.alloc().initWithString_attributes_(text, attrs)
+        self.results_view.textStorage().setAttributedString_(astr)
+
+    def showLoading_(self, word):
+        self._setPlaceholder(f'Searching "{word}"...')
+
+    def showResults_(self, data):
+        results = list(data["results"])
+        word = str(data["word"])
+
+        if not results:
+            self._setPlaceholder(f'No results found for "{word}"')
+            return
+
+        storage = self.results_view.textStorage()
+        storage.beginEditing()
+        storage.setAttributedString_(NSAttributedString.alloc().initWithString_(""))
+
+        current_category = None
+        for r in results[:20]:
+            category = str(r["category"])
+            en = str(r["en"])
+            tr = str(r["tr"])
+            rtype = str(r.get("type", ""))
+
+            if category != current_category:
+                current_category = category
+                cat_attrs = {
+                    NSForegroundColorAttributeName: NSColor.secondaryLabelColor(),
+                    NSFontAttributeName: NSFont.boldSystemFontOfSize_(11),
+                }
+                storage.appendAttributedString_(
+                    NSAttributedString.alloc().initWithString_attributes_(
+                        f"\n{category}\n", cat_attrs
+                    )
+                )
+
+            type_str = f"  {rtype}" if rtype else ""
+            line = f"  {en}  →  {tr}{type_str}\n"
+            line_attrs = {
+                NSForegroundColorAttributeName: NSColor.labelColor(),
+                NSFontAttributeName: NSFont.systemFontOfSize_(13),
+            }
+            storage.appendAttributedString_(
+                NSAttributedString.alloc().initWithString_attributes_(line, line_attrs)
+            )
+
+        storage.endEditing()
+        self.results_view.scrollRangeToVisible_(NSMakeRange(0, 0))
+
+    def showError_(self, message):
+        attrs = {
+            NSForegroundColorAttributeName: NSColor.systemRedColor(),
+            NSFontAttributeName: NSFont.systemFontOfSize_(13),
+        }
+        self.results_view.textStorage().setAttributedString_(
+            NSAttributedString.alloc().initWithString_attributes_(str(message), attrs)
+        )
+
+
+class AppDelegate(NSObject):
+
+    def applicationDidFinishLaunching_(self, notification):
+        NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+
+        self._status_item = NSStatusBar.systemStatusBar().statusItemWithLength_(
+            NSVariableStatusItemLength
+        )
+        self._status_item.button().setTitle_("TR")
+        self._status_item.button().setTarget_(self)
+        self._status_item.button().setAction_("togglePanel:")
+
+        self._panel = TurengPanel.alloc().initPanel()
+        self._panel.setDelegate_(self)
+
+        self._panel.search_field.setTarget_(self)
+        self._panel.search_field.setAction_("performSearch:")
+
+    @objc.IBAction
+    def togglePanel_(self, sender):
+        if self._panel.isVisible():
+            self._panel.orderOut_(None)
+        else:
+            self._showPanel()
+
+    @objc.python_method
+    def _showPanel(self):
+        btn = self._status_item.button()
+        if btn.window():
+            frame = btn.window().frame()
+            x = frame.origin.x + frame.size.width - PANEL_WIDTH
+            y = frame.origin.y - PANEL_HEIGHT - 6
+            screen_w = NSScreen.mainScreen().frame().size.width
+            x = max(8, min(x, screen_w - PANEL_WIDTH - 8))
+            self._panel.setFrameOrigin_(NSMakePoint(x, max(8, y)))
+
+        self._panel.makeKeyAndOrderFront_(None)
+        NSApp.activateIgnoringOtherApps_(True)
+        self._panel.makeFirstResponder_(self._panel.search_field)
+
+    def windowDidResignKey_(self, notification):
+        self._panel.orderOut_(None)
+
+    @objc.IBAction
+    def performSearch_(self, sender):
+        word = sender.stringValue().strip()
+        if not word:
+            return
+        self._panel.showLoading_(word)
+        threading.Thread(target=self._fetch, args=(word,), daemon=True).start()
+
+    @objc.python_method
     def _fetch(self, word):
         try:
             results = search(word)
+            self._panel.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "showResults:", {"results": results, "word": word}, False
+            )
         except Exception as e:
-            self._set_lines([f"Error: {e}"])
-            return
-
-        if not results:
-            self._set_lines([f'No results for "{word}"'])
-            return
-
-        lines = []
-        current_category = None
-        for r in results[:MAX_RESULTS]:
-            if r["category"] != current_category:
-                current_category = r["category"]
-                lines.append(f"── {current_category} ──")
-            type_str = f"  {r['type']}" if r["type"] else ""
-            lines.append(f"  {r['en']} → {r['tr']}{type_str}")
-
-        self._set_lines(lines)
-
-    def _set_lines(self, lines: list[str]):
-        submenu = self.menu["Results"]
-        submenu.clear()
-        for i, text in enumerate(lines):
-            # Append invisible zero-width spaces to make each key unique
-            # while setTitle_ keeps the display text clean
-            unique_key = text + "\u200b" * i
-            item = rumps.MenuItem(unique_key)
-            item._menuitem.setTitle_(text)
-            item._menuitem.setEnabled_(False)
-            submenu.add(item)
+            self._panel.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "showError:", str(e), False
+            )
 
 
 if __name__ == "__main__":
-    TurengApp().run()
+    app = NSApplication.sharedApplication()
+    delegate = AppDelegate.alloc().init()
+    app.setDelegate_(delegate)
+    app.run()
