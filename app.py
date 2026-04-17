@@ -7,18 +7,27 @@ from AppKit import (
     NSPanel, NSWindowStyleMaskBorderless,
     NSBackingStoreBuffered,
     NSVisualEffectView, NSVisualEffectMaterialPopover,
-    NSVisualEffectBlendingModeBehindWindow, NSVisualEffectStateActive,
-    NSSearchField,
+    NSVisualEffectBlendingModeBehindWindow,
+    NSVisualEffectStateFollowsWindowActiveState,
+    NSSearchField, NSTextField,
     NSScrollView, NSTextView,
-    NSView, NSButton,
+    NSView,
     NSMenu, NSMenuItem,
-    NSColor, NSFont,
+    NSColor, NSFont, NSCursor,
     NSScreen, NSApp,
+    NSWorkspace,
+    NSPasteboard, NSPasteboardTypeString,
+    NSAnimationContext,
+    NSTextAlignmentCenter,
     NSForegroundColorAttributeName, NSFontAttributeName,
+    NSLinkAttributeName, NSUnderlineStyleAttributeName,
+    NSCursorAttributeName,
     NSAttributedString,
     NSNoBorder,
     NSMakeRect, NSMakePoint, NSMakeSize, NSMakeRange,
     NSStatusWindowLevel,
+    NSEventTypeRightMouseUp,
+    NSEventMaskLeftMouseUp, NSEventMaskRightMouseUp,
 )
 from Foundation import NSObject
 
@@ -26,8 +35,19 @@ from scraper import search
 
 PANEL_WIDTH = 400
 PANEL_HEIGHT = 480
-PADDING = 14
-SEARCH_HEIGHT = 36
+
+# 8pt grid spacing tokens (HIG Visual Design)
+SPACE_XS = 4
+SPACE_SM = 8
+SPACE_MD = 12
+SPACE_LG = 16
+SPACE_XL = 20
+
+RADIUS_PANEL = 12
+
+SEARCH_HEIGHT = 24
+ANCHOR_GAP = SPACE_SM
+EDGE_MARGIN = SPACE_SM
 
 
 class TurengPanel(NSPanel):
@@ -52,55 +72,42 @@ class TurengPanel(NSPanel):
 
     @objc.python_method
     def _buildUI(self):
-        # Frosted glass background with rounded corners
-        visual = NSVisualEffectView.alloc().initWithFrame_(
-            NSMakeRect(0, 0, PANEL_WIDTH, PANEL_HEIGHT)
-        )
-        visual.setMaterial_(NSVisualEffectMaterialPopover)
-        visual.setBlendingMode_(NSVisualEffectBlendingModeBehindWindow)
-        visual.setState_(NSVisualEffectStateActive)
-        visual.setWantsLayer_(True)
-        visual.layer().setCornerRadius_(12)
-        visual.layer().setMasksToBounds_(True)
+        bg_frame = NSMakeRect(0, 0, PANEL_WIDTH, PANEL_HEIGHT)
 
-        # Search field (80% width) + Exit button (remaining 20%)
-        search_y = PANEL_HEIGHT - PADDING - SEARCH_HEIGHT
-        available_w = PANEL_WIDTH - PADDING * 2
-        btn_w = 60
-        gap = 8
-        field_w = available_w - btn_w - gap
+        if NSWorkspace.sharedWorkspace().accessibilityDisplayShouldReduceTransparency():
+            bg = NSView.alloc().initWithFrame_(bg_frame)
+            bg.setWantsLayer_(True)
+            bg.layer().setBackgroundColor_(
+                NSColor.windowBackgroundColor().CGColor()
+            )
+        else:
+            bg = NSVisualEffectView.alloc().initWithFrame_(bg_frame)
+            bg.setMaterial_(NSVisualEffectMaterialPopover)
+            bg.setBlendingMode_(NSVisualEffectBlendingModeBehindWindow)
+            bg.setState_(NSVisualEffectStateFollowsWindowActiveState)
+            bg.setWantsLayer_(True)
+
+        bg.layer().setCornerRadius_(RADIUS_PANEL)
+        bg.layer().setMasksToBounds_(True)
+
+        search_y = PANEL_HEIGHT - SPACE_LG - SEARCH_HEIGHT
+        field_w = PANEL_WIDTH - SPACE_LG * 2
 
         self.search_field = NSSearchField.alloc().initWithFrame_(
-            NSMakeRect(PADDING, search_y, field_w, SEARCH_HEIGHT)
+            NSMakeRect(SPACE_LG, search_y, field_w, SEARCH_HEIGHT)
         )
         self.search_field.setPlaceholderString_("Type a word, press Enter...")
-        self.search_field.setFont_(NSFont.systemFontOfSize_(14))
+        self.search_field.setFont_(NSFont.systemFontOfSize_(NSFont.systemFontSize()))
         self.search_field.setFocusRingType_(1)  # NSFocusRingTypeNone
-        visual.addSubview_(self.search_field)
+        bg.addSubview_(self.search_field)
 
-        # Exit button
-        btn_x = PADDING + field_w + gap
-        exit_btn = NSButton.alloc().initWithFrame_(
-            NSMakeRect(btn_x, search_y, btn_w, SEARCH_HEIGHT)
-        )
-        exit_btn.setTitle_("Exit")
-        exit_btn.setBezelStyle_(4)  # NSBezelStyleRounded
-        exit_btn.setFont_(NSFont.systemFontOfSize_(13))
-        exit_btn.setTarget_(self)
-        exit_btn.setAction_("exitApp:")
-        visual.addSubview_(exit_btn)
-
-        # Separator
-        sep_y = search_y - PADDING // 2
+        sep_y = search_y - SPACE_SM
         sep = NSView.alloc().initWithFrame_(NSMakeRect(0, sep_y, PANEL_WIDTH, 1))
         sep.setWantsLayer_(True)
-        sep.layer().setBackgroundColor_(
-            NSColor.colorWithRed_green_blue_alpha_(0.5, 0.5, 0.5, 0.4).CGColor()
-        )
-        visual.addSubview_(sep)
+        sep.layer().setBackgroundColor_(NSColor.separatorColor().CGColor())
+        bg.addSubview_(sep)
 
-        # Scroll view + text view
-        results_height = sep_y - 2
+        results_height = sep_y - 1
         scroll = NSScrollView.alloc().initWithFrame_(
             NSMakeRect(0, 0, PANEL_WIDTH, results_height)
         )
@@ -120,16 +127,92 @@ class TurengPanel(NSPanel):
         self.results_view.setMaxSize_(NSMakeSize(PANEL_WIDTH, 1e8))
         self.results_view.textContainer().setWidthTracksTextView_(True)
         self.results_view.textContainer().setContainerSize_(NSMakeSize(PANEL_WIDTH, 1e8))
-        self.results_view.setTextContainerInset_(NSMakeSize(PADDING, PADDING))
+        self.results_view.setTextContainerInset_(NSMakeSize(SPACE_LG, SPACE_LG))
+        self.results_view.setLinkTextAttributes_({
+            NSForegroundColorAttributeName: NSColor.labelColor(),
+            NSUnderlineStyleAttributeName: 0,
+            NSCursorAttributeName: NSCursor.pointingHandCursor(),
+        })
 
         scroll.setDocumentView_(self.results_view)
-        visual.addSubview_(scroll)
+        bg.addSubview_(scroll)
 
-        self.setContentView_(visual)
+        toast_w = 80
+        toast_h = 22
+        toast_x = (PANEL_WIDTH - toast_w) // 2
+        toast_y = SPACE_SM
+
+        self.copied_toast = NSView.alloc().initWithFrame_(
+            NSMakeRect(toast_x, toast_y, toast_w, toast_h)
+        )
+        self.copied_toast.setWantsLayer_(True)
+        self.copied_toast.layer().setBackgroundColor_(
+            NSColor.controlBackgroundColor().colorWithAlphaComponent_(0.85).CGColor()
+        )
+        self.copied_toast.layer().setCornerRadius_(6)
+        self.copied_toast.layer().setMasksToBounds_(True)
+        self.copied_toast.setAlphaValue_(0.0)
+
+        toast_label = NSTextField.alloc().initWithFrame_(
+            NSMakeRect(0, 3, toast_w, 16)
+        )
+        toast_label.setStringValue_("Copied")
+        toast_label.setEditable_(False)
+        toast_label.setSelectable_(False)
+        toast_label.setBordered_(False)
+        toast_label.setBezeled_(False)
+        toast_label.setDrawsBackground_(False)
+        toast_label.setAlignment_(NSTextAlignmentCenter)
+        toast_label.setTextColor_(NSColor.secondaryLabelColor())
+        toast_label.setFont_(NSFont.systemFontOfSize_(NSFont.smallSystemFontSize()))
+        self.copied_toast.addSubview_(toast_label)
+
+        bg.addSubview_(self.copied_toast)
+
+        self.setContentView_(bg)
         self._setPlaceholder("Type a word above and press Enter to translate")
 
-    def exitApp_(self, sender):
-        NSApp.terminate_(None)
+    def cancelOperation_(self, sender):
+        self.orderOut_(None)
+
+    def orderOut_(self, sender):
+        if hasattr(self, "copied_toast"):
+            NSObject.cancelPreviousPerformRequestsWithTarget_selector_object_(
+                self, "_hideCopiedToast:", None
+            )
+            self.copied_toast.layer().removeAllAnimations()
+            self.copied_toast.setAlphaValue_(0.0)
+        objc.super(TurengPanel, self).orderOut_(sender)
+
+    @objc.python_method
+    def showCopiedToast(self):
+        NSObject.cancelPreviousPerformRequestsWithTarget_selector_object_(
+            self, "_hideCopiedToast:", None
+        )
+
+        reduce_motion = NSWorkspace.sharedWorkspace().accessibilityDisplayShouldReduceMotion()
+
+        if reduce_motion:
+            self.copied_toast.setAlphaValue_(1.0)
+        else:
+            NSAnimationContext.beginGrouping()
+            NSAnimationContext.currentContext().setDuration_(0.2)
+            self.copied_toast.animator().setAlphaValue_(1.0)
+            NSAnimationContext.endGrouping()
+
+        self.performSelector_withObject_afterDelay_(
+            "_hideCopiedToast:", None, 0.8
+        )
+
+    def _hideCopiedToast_(self, _):
+        reduce_motion = NSWorkspace.sharedWorkspace().accessibilityDisplayShouldReduceMotion()
+        if reduce_motion:
+            self.copied_toast.setAlphaValue_(0.0)
+        else:
+            NSAnimationContext.beginGrouping()
+            NSAnimationContext.currentContext().setDuration_(0.2)
+            self.copied_toast.animator().setAlphaValue_(0.0)
+            NSAnimationContext.endGrouping()
 
     def canBecomeKeyWindow(self):
         return True
@@ -180,14 +263,24 @@ class TurengPanel(NSPanel):
                     )
                 )
 
-            type_str = f"  {rtype}" if rtype else ""
-            line = f"  {en}  →  {tr}{type_str}\n"
             line_attrs = {
                 NSForegroundColorAttributeName: NSColor.labelColor(),
                 NSFontAttributeName: NSFont.systemFontOfSize_(13),
             }
+            target_attrs = dict(line_attrs)
+            target_attrs[NSLinkAttributeName] = tr
+
+            prefix = f"  {en}  →  "
+            suffix = f"  {rtype}\n" if rtype else "\n"
+
             storage.appendAttributedString_(
-                NSAttributedString.alloc().initWithString_attributes_(line, line_attrs)
+                NSAttributedString.alloc().initWithString_attributes_(prefix, line_attrs)
+            )
+            storage.appendAttributedString_(
+                NSAttributedString.alloc().initWithString_attributes_(tr, target_attrs)
+            )
+            storage.appendAttributedString_(
+                NSAttributedString.alloc().initWithString_attributes_(suffix, line_attrs)
             )
 
         storage.endEditing()
@@ -222,6 +315,16 @@ class AppDelegate(NSObject):
         menubar.addItem_(edit_item)
         NSApp.setMainMenu_(menubar)
 
+    @objc.python_method
+    def _buildStatusMenu(self):
+        menu = NSMenu.alloc().init()
+        quit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            "Quit Tureng", "terminate:", "q"
+        )
+        quit_item.setTarget_(NSApp)
+        menu.addItem_(quit_item)
+        return menu
+
     def applicationDidFinishLaunching_(self, notification):
         NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
         self._buildAppMenu()
@@ -231,16 +334,29 @@ class AppDelegate(NSObject):
         )
         self._status_item.button().setTitle_("TR")
         self._status_item.button().setTarget_(self)
-        self._status_item.button().setAction_("togglePanel:")
+        self._status_item.button().setAction_("statusItemClicked:")
+        self._status_item.button().sendActionOn_(
+            NSEventMaskLeftMouseUp | NSEventMaskRightMouseUp
+        )
+
+        self._status_menu = self._buildStatusMenu()
 
         self._panel = TurengPanel.alloc().initPanel()
         self._panel.setDelegate_(self)
 
         self._panel.search_field.setTarget_(self)
         self._panel.search_field.setAction_("performSearch:")
+        self._panel.search_field.setDelegate_(self)
+        self._panel.results_view.setDelegate_(self)
 
     @objc.IBAction
-    def togglePanel_(self, sender):
+    def statusItemClicked_(self, sender):
+        event = NSApp.currentEvent()
+        if event is not None and event.type() == NSEventTypeRightMouseUp:
+            self._status_item.setMenu_(self._status_menu)
+            self._status_item.button().performClick_(None)
+            self._status_item.setMenu_(None)
+            return
         if self._panel.isVisible():
             self._panel.orderOut_(None)
         else:
@@ -252,10 +368,10 @@ class AppDelegate(NSObject):
         if btn.window():
             frame = btn.window().frame()
             x = frame.origin.x + frame.size.width - PANEL_WIDTH
-            y = frame.origin.y - PANEL_HEIGHT - 6
+            y = frame.origin.y - PANEL_HEIGHT - ANCHOR_GAP
             screen_w = NSScreen.mainScreen().frame().size.width
-            x = max(8, min(x, screen_w - PANEL_WIDTH - 8))
-            self._panel.setFrameOrigin_(NSMakePoint(x, max(8, y)))
+            x = max(EDGE_MARGIN, min(x, screen_w - PANEL_WIDTH - EDGE_MARGIN))
+            self._panel.setFrameOrigin_(NSMakePoint(x, max(EDGE_MARGIN, y)))
 
         self._panel.makeKeyAndOrderFront_(None)
         NSApp.activateIgnoringOtherApps_(True)
@@ -263,6 +379,22 @@ class AppDelegate(NSObject):
 
     def windowDidResignKey_(self, notification):
         self._panel.orderOut_(None)
+
+    def control_textView_doCommandBySelector_(self, control, textView, selector):
+        if str(selector) == "cancelOperation:":
+            self._panel.orderOut_(None)
+            return True
+        return False
+
+    def textView_clickedOnLink_atIndex_(self, textView, link, charIndex):
+        word = str(link).strip()
+        if not word:
+            return False
+        pb = NSPasteboard.generalPasteboard()
+        pb.clearContents()
+        pb.setString_forType_(word, NSPasteboardTypeString)
+        self._panel.showCopiedToast()
+        return True
 
     @objc.IBAction
     def performSearch_(self, sender):
