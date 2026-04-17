@@ -26,10 +26,13 @@ from AppKit import (
     NSNoBorder,
     NSMakeRect, NSMakePoint, NSMakeSize, NSMakeRange,
     NSStatusWindowLevel,
+    NSEvent,
     NSEventTypeRightMouseUp,
     NSEventMaskLeftMouseUp, NSEventMaskRightMouseUp,
+    NSEventMaskFlagsChanged, NSEventModifierFlagShift,
 )
-from Foundation import NSObject
+from Foundation import NSObject, NSProcessInfo
+from PyObjCTools import AppHelper
 
 from scraper import search
 
@@ -74,21 +77,25 @@ class TurengPanel(NSPanel):
     def _buildUI(self):
         bg_frame = NSMakeRect(0, 0, PANEL_WIDTH, PANEL_HEIGHT)
 
+        container = NSView.alloc().initWithFrame_(bg_frame)
+        container.setWantsLayer_(True)
+        container.layer().setCornerRadius_(RADIUS_PANEL)
+        container.layer().setMasksToBounds_(True)
+
         if NSWorkspace.sharedWorkspace().accessibilityDisplayShouldReduceTransparency():
-            bg = NSView.alloc().initWithFrame_(bg_frame)
-            bg.setWantsLayer_(True)
-            bg.layer().setBackgroundColor_(
+            self.background = NSView.alloc().initWithFrame_(bg_frame)
+            self.background.setWantsLayer_(True)
+            self.background.layer().setBackgroundColor_(
                 NSColor.windowBackgroundColor().CGColor()
             )
         else:
-            bg = NSVisualEffectView.alloc().initWithFrame_(bg_frame)
-            bg.setMaterial_(NSVisualEffectMaterialPopover)
-            bg.setBlendingMode_(NSVisualEffectBlendingModeBehindWindow)
-            bg.setState_(NSVisualEffectStateFollowsWindowActiveState)
-            bg.setWantsLayer_(True)
+            self.background = NSVisualEffectView.alloc().initWithFrame_(bg_frame)
+            self.background.setMaterial_(NSVisualEffectMaterialPopover)
+            self.background.setBlendingMode_(NSVisualEffectBlendingModeBehindWindow)
+            self.background.setState_(NSVisualEffectStateFollowsWindowActiveState)
+            self.background.setWantsLayer_(True)
 
-        bg.layer().setCornerRadius_(RADIUS_PANEL)
-        bg.layer().setMasksToBounds_(True)
+        container.addSubview_(self.background)
 
         search_y = PANEL_HEIGHT - SPACE_LG - SEARCH_HEIGHT
         field_w = PANEL_WIDTH - SPACE_LG * 2
@@ -99,13 +106,13 @@ class TurengPanel(NSPanel):
         self.search_field.setPlaceholderString_("Type a word, press Enter...")
         self.search_field.setFont_(NSFont.systemFontOfSize_(NSFont.systemFontSize()))
         self.search_field.setFocusRingType_(1)  # NSFocusRingTypeNone
-        bg.addSubview_(self.search_field)
+        container.addSubview_(self.search_field)
 
         sep_y = search_y - SPACE_SM
         sep = NSView.alloc().initWithFrame_(NSMakeRect(0, sep_y, PANEL_WIDTH, 1))
         sep.setWantsLayer_(True)
         sep.layer().setBackgroundColor_(NSColor.separatorColor().CGColor())
-        bg.addSubview_(sep)
+        container.addSubview_(sep)
 
         results_height = sep_y - 1
         scroll = NSScrollView.alloc().initWithFrame_(
@@ -135,7 +142,7 @@ class TurengPanel(NSPanel):
         })
 
         scroll.setDocumentView_(self.results_view)
-        bg.addSubview_(scroll)
+        container.addSubview_(scroll)
 
         toast_w = 80
         toast_h = 22
@@ -167,9 +174,9 @@ class TurengPanel(NSPanel):
         toast_label.setFont_(NSFont.systemFontOfSize_(NSFont.smallSystemFontSize()))
         self.copied_toast.addSubview_(toast_label)
 
-        bg.addSubview_(self.copied_toast)
+        container.addSubview_(self.copied_toast)
 
-        self.setContentView_(bg)
+        self.setContentView_(container)
         self._setPlaceholder("Type a word above and press Enter to translate")
 
     def cancelOperation_(self, sender):
@@ -182,6 +189,9 @@ class TurengPanel(NSPanel):
             )
             self.copied_toast.layer().removeAllAnimations()
             self.copied_toast.setAlphaValue_(0.0)
+        if hasattr(self, "background") and self.background is not None:
+            self.background.layer().removeAllAnimations()
+            self.background.setAlphaValue_(1.0)
         objc.super(TurengPanel, self).orderOut_(sender)
 
     @objc.python_method
@@ -212,6 +222,22 @@ class TurengPanel(NSPanel):
             NSAnimationContext.beginGrouping()
             NSAnimationContext.currentContext().setDuration_(0.2)
             self.copied_toast.animator().setAlphaValue_(0.0)
+            NSAnimationContext.endGrouping()
+
+    @objc.python_method
+    def setPeek(self, peek_on):
+        if not hasattr(self, "background") or self.background is None:
+            return
+        ws = NSWorkspace.sharedWorkspace()
+        if ws.accessibilityDisplayShouldReduceTransparency():
+            return
+        target_alpha = 0.35 if peek_on else 1.0
+        if ws.accessibilityDisplayShouldReduceMotion():
+            self.background.setAlphaValue_(target_alpha)
+        else:
+            NSAnimationContext.beginGrouping()
+            NSAnimationContext.currentContext().setDuration_(0.12)
+            self.background.animator().setAlphaValue_(target_alpha)
             NSAnimationContext.endGrouping()
 
     def canBecomeKeyWindow(self):
@@ -301,6 +327,17 @@ class AppDelegate(NSObject):
     @objc.python_method
     def _buildAppMenu(self):
         menubar = NSMenu.alloc().init()
+
+        app_item = NSMenuItem.alloc().init()
+        app_menu = NSMenu.alloc().init()
+        quit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            "Quit Tureng", "terminate:", "q"
+        )
+        quit_item.setTarget_(NSApp)
+        app_menu.addItem_(quit_item)
+        app_item.setSubmenu_(app_menu)
+        menubar.addItem_(app_item)
+
         edit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Edit", None, "")
         edit_menu = NSMenu.alloc().initWithTitle_("Edit")
         for title, action, key in [
@@ -313,6 +350,7 @@ class AppDelegate(NSObject):
             edit_menu.addItemWithTitle_action_keyEquivalent_(title, action, key)
         edit_item.setSubmenu_(edit_menu)
         menubar.addItem_(edit_item)
+
         NSApp.setMainMenu_(menubar)
 
     @objc.python_method
@@ -349,6 +387,8 @@ class AppDelegate(NSObject):
         self._panel.search_field.setDelegate_(self)
         self._panel.results_view.setDelegate_(self)
 
+        self._installFlagsMonitor()
+
     @objc.IBAction
     def statusItemClicked_(self, sender):
         event = NSApp.currentEvent()
@@ -376,6 +416,20 @@ class AppDelegate(NSObject):
         self._panel.makeKeyAndOrderFront_(None)
         NSApp.activateIgnoringOtherApps_(True)
         self._panel.makeFirstResponder_(self._panel.search_field)
+
+        peek_held = bool(NSEvent.modifierFlags() & NSEventModifierFlagShift)
+        self._panel.setPeek(peek_held)
+
+    @objc.python_method
+    def _installFlagsMonitor(self):
+        def handler(event):
+            if self._panel.isVisible():
+                peek_held = bool(event.modifierFlags() & NSEventModifierFlagShift)
+                self._panel.setPeek(peek_held)
+            return event
+        self._flags_monitor = NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
+            NSEventMaskFlagsChanged, handler
+        )
 
     def windowDidResignKey_(self, notification):
         self._panel.orderOut_(None)
@@ -418,7 +472,9 @@ class AppDelegate(NSObject):
 
 
 if __name__ == "__main__":
+    NSProcessInfo.processInfo().setProcessName_("Tureng")
     app = NSApplication.sharedApplication()
     delegate = AppDelegate.alloc().init()
     app.setDelegate_(delegate)
+    AppHelper.installMachInterrupt()
     app.run()
