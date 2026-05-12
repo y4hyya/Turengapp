@@ -1,4 +1,7 @@
-rumps
-requests
 cloudscraper
 beautifulsoup4
+requests
+pyobjc-framework-Cocoa
+
+# Build-only (not needed at runtime once bundled with py2app):
+# py2app

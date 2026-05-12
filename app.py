@@ -356,12 +356,17 @@ class AppDelegate(NSObject):
     @objc.python_method
     def _buildStatusMenu(self):
         menu = NSMenu.alloc().init()
+        menu.setAutoenablesItems_(False)
         quit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            "Quit Tureng", "terminate:", "q"
+            "Quit Tureng", "quitTureng:", "q"
         )
-        quit_item.setTarget_(NSApp)
+        quit_item.setTarget_(self)
         menu.addItem_(quit_item)
         return menu
+
+    @objc.IBAction
+    def quitTureng_(self, sender):
+        NSApp.terminate_(None)
 
     def applicationDidFinishLaunching_(self, notification):
         NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
