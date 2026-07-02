@@ -20,6 +20,7 @@ from AppKit import (
     NSAnimationContext,
     NSTextAlignmentCenter,
     NSForegroundColorAttributeName, NSFontAttributeName,
+    NSBackgroundColorAttributeName,
     NSLinkAttributeName, NSUnderlineStyleAttributeName,
     NSCursorAttributeName,
     NSAttributedString,
@@ -75,6 +76,10 @@ class TurengPanel(NSPanel):
 
     @objc.python_method
     def _buildUI(self):
+        # (location, utf16-length, word) per copyable link segment, in display order
+        self.link_items = []
+        self.selected_index = -1
+
         bg_frame = NSMakeRect(0, 0, PANEL_WIDTH, PANEL_HEIGHT)
 
         container = NSView.alloc().initWithFrame_(bg_frame)
@@ -192,6 +197,8 @@ class TurengPanel(NSPanel):
         if hasattr(self, "background") and self.background is not None:
             self.background.layer().removeAllAnimations()
             self.background.setAlphaValue_(1.0)
+        if hasattr(self, "link_items"):
+            self.clearWordSelection()
         objc.super(TurengPanel, self).orderOut_(sender)
 
     @objc.python_method
@@ -247,7 +254,56 @@ class TurengPanel(NSPanel):
         return True
 
     @objc.python_method
+    def _selectedRange(self):
+        if 0 <= self.selected_index < len(self.link_items):
+            loc, length, _ = self.link_items[self.selected_index]
+            return NSMakeRange(loc, length)
+        return None
+
+    @objc.python_method
+    def _setWordHighlight(self, on):
+        rng = self._selectedRange()
+        if rng is None:
+            return
+        layout = self.results_view.layoutManager()
+        if on:
+            layout.addTemporaryAttributes_forCharacterRange_(
+                {NSBackgroundColorAttributeName: NSColor.selectedTextBackgroundColor()},
+                rng,
+            )
+        else:
+            layout.removeTemporaryAttribute_forCharacterRange_(
+                NSBackgroundColorAttributeName, rng
+            )
+
+    @objc.python_method
+    def moveWordSelection(self, delta):
+        if not self.link_items:
+            return
+        self._setWordHighlight(False)
+        count = len(self.link_items)
+        if self.selected_index < 0:
+            self.selected_index = 0 if delta > 0 else count - 1
+        else:
+            self.selected_index = (self.selected_index + delta) % count
+        self._setWordHighlight(True)
+        self.results_view.scrollRangeToVisible_(self._selectedRange())
+
+    @objc.python_method
+    def selectedWord(self):
+        if 0 <= self.selected_index < len(self.link_items):
+            return self.link_items[self.selected_index][2]
+        return None
+
+    @objc.python_method
+    def clearWordSelection(self):
+        self._setWordHighlight(False)
+        self.selected_index = -1
+
+    @objc.python_method
     def _setPlaceholder(self, text):
+        self.clearWordSelection()
+        self.link_items = []
         attrs = {
             NSForegroundColorAttributeName: NSColor.tertiaryLabelColor(),
             NSFontAttributeName: NSFont.systemFontOfSize_(13),
@@ -265,6 +321,9 @@ class TurengPanel(NSPanel):
         if not results:
             self._setPlaceholder(f'No results found for "{word}"')
             return
+
+        self.clearWordSelection()
+        self.link_items = []
 
         storage = self.results_view.textStorage()
         storage.beginEditing()
@@ -302,9 +361,9 @@ class TurengPanel(NSPanel):
             storage.appendAttributedString_(
                 NSAttributedString.alloc().initWithString_attributes_(prefix, line_attrs)
             )
-            storage.appendAttributedString_(
-                NSAttributedString.alloc().initWithString_attributes_(tr, target_attrs)
-            )
+            tr_astr = NSAttributedString.alloc().initWithString_attributes_(tr, target_attrs)
+            self.link_items.append((storage.length(), tr_astr.length(), tr))
+            storage.appendAttributedString_(tr_astr)
             storage.appendAttributedString_(
                 NSAttributedString.alloc().initWithString_attributes_(suffix, line_attrs)
             )
@@ -313,6 +372,8 @@ class TurengPanel(NSPanel):
         self.results_view.scrollRangeToVisible_(NSMakeRange(0, 0))
 
     def showError_(self, message):
+        self.clearWordSelection()
+        self.link_items = []
         attrs = {
             NSForegroundColorAttributeName: NSColor.systemRedColor(),
             NSFontAttributeName: NSFont.systemFontOfSize_(13),
@@ -440,18 +501,39 @@ class AppDelegate(NSObject):
         self._panel.orderOut_(None)
 
     def control_textView_doCommandBySelector_(self, control, textView, selector):
-        if str(selector) == "cancelOperation:":
+        sel = str(selector)
+        if sel == "cancelOperation:":
             self._panel.orderOut_(None)
             return True
+        if sel == "moveDown:":
+            self._panel.moveWordSelection(1)
+            return True
+        if sel == "moveUp:":
+            self._panel.moveWordSelection(-1)
+            return True
+        if sel == "insertNewline:":
+            word = self._panel.selectedWord()
+            if word is not None:
+                self._copyToPasteboard(word)
+                self._panel.orderOut_(None)
+                return True
+            return False
         return False
+
+    def controlTextDidChange_(self, notification):
+        self._panel.clearWordSelection()
+
+    @objc.python_method
+    def _copyToPasteboard(self, word):
+        pb = NSPasteboard.generalPasteboard()
+        pb.clearContents()
+        pb.setString_forType_(word, NSPasteboardTypeString)
 
     def textView_clickedOnLink_atIndex_(self, textView, link, charIndex):
         word = str(link).strip()
         if not word:
             return False
-        pb = NSPasteboard.generalPasteboard()
-        pb.clearContents()
-        pb.setString_forType_(word, NSPasteboardTypeString)
+        self._copyToPasteboard(word)
         self._panel.showCopiedToast()
         return True
 
