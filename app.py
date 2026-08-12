@@ -1,5 +1,6 @@
 import objc
 import threading
+import traceback
 
 from AppKit import (
     NSApplication, NSApplicationActivationPolicyAccessory,
@@ -35,7 +36,7 @@ from AppKit import (
 from Foundation import NSObject, NSProcessInfo
 from PyObjCTools import AppHelper
 
-from scraper import search
+from scraper import search, warm_up, SearchError
 
 PANEL_WIDTH = 400
 PANEL_HEIGHT = 480
@@ -256,7 +257,7 @@ class TurengPanel(NSPanel):
     @objc.python_method
     def _selectedRange(self):
         if 0 <= self.selected_index < len(self.link_items):
-            loc, length, _ = self.link_items[self.selected_index]
+            loc, length = self.link_items[self.selected_index][:2]
             return NSMakeRange(loc, length)
         return None
 
@@ -290,9 +291,11 @@ class TurengPanel(NSPanel):
         self.results_view.scrollRangeToVisible_(self._selectedRange())
 
     @objc.python_method
-    def selectedWord(self):
+    def selectedItem(self):
+        """(word, kind) of the highlighted link segment, or None. kind: "copy" | "search"."""
         if 0 <= self.selected_index < len(self.link_items):
-            return self.link_items[self.selected_index][2]
+            item = self.link_items[self.selected_index]
+            return item[2], item[3]
         return None
 
     @objc.python_method
@@ -314,12 +317,19 @@ class TurengPanel(NSPanel):
     def showLoading_(self, word):
         self._setPlaceholder(f'Searching "{word}"...')
 
+    def showStillSearching_(self, word):
+        self._setPlaceholder(f'Still searching "{word}"...')
+
     def showResults_(self, data):
         results = list(data["results"])
         word = str(data["word"])
+        suggestions = [str(s) for s in data.get("suggestions", [])]
 
         if not results:
-            self._setPlaceholder(f'No results found for "{word}"')
+            if suggestions:
+                self._showSuggestions(word, suggestions)
+            else:
+                self._setPlaceholder(f'No results found for "{word}"')
             return
 
         self.clearWordSelection()
@@ -362,10 +372,58 @@ class TurengPanel(NSPanel):
                 NSAttributedString.alloc().initWithString_attributes_(prefix, line_attrs)
             )
             tr_astr = NSAttributedString.alloc().initWithString_attributes_(tr, target_attrs)
-            self.link_items.append((storage.length(), tr_astr.length(), tr))
+            self.link_items.append((storage.length(), tr_astr.length(), tr, "copy"))
             storage.appendAttributedString_(tr_astr)
             storage.appendAttributedString_(
                 NSAttributedString.alloc().initWithString_attributes_(suffix, line_attrs)
+            )
+
+        storage.endEditing()
+        self.results_view.scrollRangeToVisible_(NSMakeRange(0, 0))
+
+    @objc.python_method
+    def _showSuggestions(self, word, suggestions):
+        self.clearWordSelection()
+        self.link_items = []
+
+        storage = self.results_view.textStorage()
+        storage.beginEditing()
+        storage.setAttributedString_(NSAttributedString.alloc().initWithString_(""))
+
+        info_attrs = {
+            NSForegroundColorAttributeName: NSColor.tertiaryLabelColor(),
+            NSFontAttributeName: NSFont.systemFontOfSize_(13),
+        }
+        storage.appendAttributedString_(
+            NSAttributedString.alloc().initWithString_attributes_(
+                f'No results found for "{word}"\n', info_attrs
+            )
+        )
+
+        head_attrs = {
+            NSForegroundColorAttributeName: NSColor.secondaryLabelColor(),
+            NSFontAttributeName: NSFont.boldSystemFontOfSize_(11),
+        }
+        storage.appendAttributedString_(
+            NSAttributedString.alloc().initWithString_attributes_("\nDid you mean\n", head_attrs)
+        )
+
+        line_attrs = {
+            NSForegroundColorAttributeName: NSColor.labelColor(),
+            NSFontAttributeName: NSFont.systemFontOfSize_(13),
+        }
+        for s in suggestions:
+            link_attrs = dict(line_attrs)
+            link_attrs[NSLinkAttributeName] = f"search:{s}"
+
+            storage.appendAttributedString_(
+                NSAttributedString.alloc().initWithString_attributes_("  ", line_attrs)
+            )
+            s_astr = NSAttributedString.alloc().initWithString_attributes_(s, link_attrs)
+            self.link_items.append((storage.length(), s_astr.length(), s, "search"))
+            storage.appendAttributedString_(s_astr)
+            storage.appendAttributedString_(
+                NSAttributedString.alloc().initWithString_attributes_("\n", line_attrs)
             )
 
         storage.endEditing()
@@ -430,6 +488,7 @@ class AppDelegate(NSObject):
         NSApp.terminate_(None)
 
     def applicationDidFinishLaunching_(self, notification):
+        self._search_seq = 0  # minted per search on the main thread; see performSearch_
         NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
         self._buildAppMenu()
 
@@ -454,6 +513,8 @@ class AppDelegate(NSObject):
         self._panel.results_view.setDelegate_(self)
 
         self._installFlagsMonitor()
+
+        threading.Thread(target=warm_up, daemon=True).start()
 
     @objc.IBAction
     def statusItemClicked_(self, sender):
@@ -512,10 +573,14 @@ class AppDelegate(NSObject):
             self._panel.moveWordSelection(-1)
             return True
         if sel == "insertNewline:":
-            word = self._panel.selectedWord()
-            if word is not None:
-                self._copyToPasteboard(word)
-                self._panel.orderOut_(None)
+            item = self._panel.selectedItem()
+            if item is not None:
+                word, kind = item
+                if kind == "search":
+                    self._searchFor(word)
+                else:
+                    self._copyToPasteboard(word)
+                    self._panel.orderOut_(None)
                 return True
             return False
         return False
@@ -530,10 +595,13 @@ class AppDelegate(NSObject):
         pb.setString_forType_(word, NSPasteboardTypeString)
 
     def textView_clickedOnLink_atIndex_(self, textView, link, charIndex):
-        word = str(link).strip()
-        if not word:
+        value = str(link).strip()
+        if not value:
             return False
-        self._copyToPasteboard(word)
+        if value.startswith("search:"):
+            self._searchFor(value[len("search:"):])
+            return True
+        self._copyToPasteboard(value)
         self._panel.showCopiedToast()
         return True
 
@@ -542,20 +610,65 @@ class AppDelegate(NSObject):
         word = sender.stringValue().strip()
         if not word:
             return
+        self._search_seq += 1  # main thread only (action method); workers get a copy
+        seq = self._search_seq
         self._panel.showLoading_(word)
-        threading.Thread(target=self._fetch, args=(word,), daemon=True).start()
+        threading.Thread(target=self._fetch, args=(word, seq), daemon=True).start()
 
     @objc.python_method
-    def _fetch(self, word):
+    def _searchFor(self, word):
+        field = self._panel.search_field
+        field.setStringValue_(word)
+        self.performSearch_(field)
+
+    @objc.python_method
+    def _fetch(self, word, seq):
+        def notify_retry(attempt):
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "searchMadeProgress:", {"seq": seq, "word": word}, False
+            )
+
         try:
-            results = search(word)
-            self._panel.performSelectorOnMainThread_withObject_waitUntilDone_(
-                "showResults:", {"results": results, "word": word}, False
+            payload = search(word, on_retry=notify_retry)
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "searchDidFinish:",
+                {
+                    "seq": seq,
+                    "word": word,
+                    "results": payload["results"],
+                    "suggestions": payload["suggestions"],
+                },
+                False,
             )
-        except Exception as e:
-            self._panel.performSelectorOnMainThread_withObject_waitUntilDone_(
-                "showError:", str(e), False
+        except SearchError as e:
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "searchDidFail:", {"seq": seq, "word": word, "message": str(e)}, False
             )
+        except Exception:
+            traceback.print_exc()
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "searchDidFail:",
+                {"seq": seq, "word": word, "message": "Something went wrong — press Enter to retry."},
+                False,
+            )
+
+    # Latest-wins gate: payloads from superseded searches are dropped here.
+    # _search_seq is written only in performSearch_ and read only in these
+    # main-thread selectors, so no locking is needed.
+    def searchDidFinish_(self, payload):
+        if int(payload["seq"]) != self._search_seq:
+            return
+        self._panel.showResults_(payload)
+
+    def searchDidFail_(self, payload):
+        if int(payload["seq"]) != self._search_seq:
+            return
+        self._panel.showError_(str(payload["message"]))
+
+    def searchMadeProgress_(self, payload):
+        if int(payload["seq"]) != self._search_seq:
+            return
+        self._panel.showStillSearching_(str(payload["word"]))
 
 
 if __name__ == "__main__":
