@@ -15,6 +15,8 @@ from AppKit import (
     NSView,
     NSMenu, NSMenuItem,
     NSColor, NSFont, NSCursor,
+    NSImage, NSImageSymbolConfiguration, NSImageSymbolScaleMedium,
+    NSImageOnly, NSFontWeightMedium,
     NSScreen, NSApp,
     NSWorkspace,
     NSPasteboard, NSPasteboardTypeString,
@@ -40,6 +42,13 @@ from scraper import search, warm_up, SearchError
 
 PANEL_WIDTH = 400
 PANEL_HEIGHT = 480
+
+# Menu-bar icon: an SF Symbol rendered as a template image, so it follows the
+# menu bar's appearance (light/dark/tinted, pressed highlight) like Apple's own
+# extras. A text title ("TR") was indistinguishable from macOS's "TR" keyboard
+# input-source indicator.
+STATUS_SYMBOL = "character.book.closed"
+STATUS_SYMBOL_SIZE = 16  # pt; sized like the system extras (Wi-Fi, battery)
 
 # 8pt grid spacing tokens (HIG Visual Design)
 SPACE_XS = 4
@@ -495,10 +504,16 @@ class AppDelegate(NSObject):
         self._status_item = NSStatusBar.systemStatusBar().statusItemWithLength_(
             NSVariableStatusItemLength
         )
-        self._status_item.button().setTitle_("TR")
-        self._status_item.button().setTarget_(self)
-        self._status_item.button().setAction_("statusItemClicked:")
-        self._status_item.button().sendActionOn_(
+        button = self._status_item.button()
+        image = self._statusImage()
+        if image is not None:
+            button.setImage_(image)
+            button.setImagePosition_(NSImageOnly)
+        else:  # symbol unavailable on this macOS: keep the old text title
+            button.setTitle_("TR")
+        button.setTarget_(self)
+        button.setAction_("statusItemClicked:")
+        button.sendActionOn_(
             NSEventMaskLeftMouseUp | NSEventMaskRightMouseUp
         )
 
@@ -515,6 +530,19 @@ class AppDelegate(NSObject):
         self._installFlagsMonitor()
 
         threading.Thread(target=warm_up, daemon=True).start()
+
+    @objc.python_method
+    def _statusImage(self):
+        """Template image for the status item, or None if the symbol is missing."""
+        image = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+            STATUS_SYMBOL, "Tureng"
+        )
+        if image is None:
+            return None
+        config = NSImageSymbolConfiguration.configurationWithPointSize_weight_scale_(
+            STATUS_SYMBOL_SIZE, NSFontWeightMedium, NSImageSymbolScaleMedium
+        )
+        return image.imageWithSymbolConfiguration_(config)
 
     @objc.IBAction
     def statusItemClicked_(self, sender):

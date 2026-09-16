@@ -6,7 +6,7 @@
 
 ## What is this?
 
-[tureng.com](https://tureng.com) is the de-facto Turkish ↔ English dictionary — it groups results by domain (everyday speech, idioms, finance, medicine, etc.) and is what most Turkish speakers reach for online. **Tureng** is a small native macOS app that wraps it. Instead of opening a browser tab and waiting for the page, you tap the `TR` icon in your menu bar, type a word, hit `Enter`, and click any translation to copy it. The panel disappears when you click away.
+[tureng.com](https://tureng.com) is the de-facto Turkish ↔ English dictionary — it groups results by domain (everyday speech, idioms, finance, medicine, etc.) and is what most Turkish speakers reach for online. **Tureng** is a small native macOS app that wraps it. Instead of opening a browser tab and waiting for the page, you tap the book icon in your menu bar, type a word, hit `Enter`, and click any translation to copy it. The panel disappears when you click away.
 
 ## Features
 
@@ -14,7 +14,7 @@
 - **Click a translation to copy it** — a small "Copied" pill confirms
 - **Hold `⇧ Shift` to peek through** the panel — see what's underneath without dismissing
 - **`Esc` to dismiss, `⌘Q` to quit** — fully keyboard-driven
-- **Right-click the `TR` icon** for a quit menu, if you prefer the mouse
+- **Right-click the book icon** for a quit menu, if you prefer the mouse
 
 ## Install
 
@@ -23,7 +23,7 @@
 1. Grab `Tureng.app.zip` from the [latest release](https://github.com/y4hyya/Turengapp/releases/latest)
 2. Unzip, drag `Tureng.app` to `/Applications`
 3. **First launch:** macOS Gatekeeper will block it because the app isn't signed. Right-click `Tureng.app` → **Open** → confirm. You only need to do this once.
-4. Click the `TR` icon in your menu bar.
+4. Click the book icon in your menu bar.
 
 > **Requires:** macOS 13 or newer, Apple Silicon (M1 / M2 / M3 / …). For Intel, build from source with `arch = "x86_64"` in `setup.py`.
 
@@ -41,7 +41,7 @@ Same Gatekeeper note applies on first launch.
 
 ## Launch at login
 
-So the `TR` icon is there every time you start your Mac:
+So the book icon is there every time you start your Mac:
 
 1. Open **System Settings** → **General** → **Login Items & Extensions**
 2. Under **Open at Login**, click `+`
@@ -51,13 +51,13 @@ So the `TR` icon is there every time you start your Mac:
 
 | Action | Result |
 |---|---|
-| Click `TR` | Open / close the popover |
+| Click the book icon | Open / close the popover |
 | Type a word + `↩` | Search tureng.com |
 | Click a translation row | Copy that word to the clipboard |
 | Hold `⇧ Shift` | Fade the panel to peek at what's behind it |
 | `Esc` | Dismiss the popover |
 | `⌘Q` | Quit |
-| Right-click `TR` → Quit Tureng | Quit |
+| Right-click the book icon → Quit Tureng | Quit |
 
 ## How it works
 
